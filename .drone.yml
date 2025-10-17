@@ -1,30 +1,13 @@
 ---
-# Variables pour différents environnements
-preprod_env: &preprod_env
-   BASE_URL: https://tommy-drone-builds.s3.amazonaws.com/
-   BUCKET: tommy-drone-builds
-   ENV: pre-prod
-
-release_env: &release_env
-   BASE_URL: https://tommy-release.s3.amazonaws.com/pre-prod/
-   BUCKET: tommy-release
-   PATH: pre-prod
-   ENV: release
-
-prod_env: &prod_env
-   BASE_URL: https://tommy-prod.s3.amazonaws.com/
-   BUCKET: tommy-prod
-   ENV: production
-
-# Pipeline pour Master (Pre-prod)
----
 kind: pipeline
 name: pre-prod
 steps:
   - name: hugo-build
     image: peaceiris/hugo:v0.65.3-mod
     environment:
-      <<: *preprod_env
+      BASE_URL: https://tommy-drone-builds.s3.amazonaws.com/
+      BUCKET: tommy-drone-builds
+      ENV: pre-prod
     commands:
       - hugo --baseURL $BASE_URL
     volumes:
@@ -43,8 +26,8 @@ steps:
       AWS_DEFAULT_REGION: us-east-1
     commands:
       - echo "Deploying to Pre-prod environment..."
-      - aws s3 sync public/ s3://${BUCKET} --delete
-      - aws s3 website s3://${BUCKET} --index-document index.html --error-document 404.html
+      - aws s3 sync public/ s3://tommy-drone-builds --delete
+      - aws s3 website s3://tommy-drone-builds --index-document index.html --error-document 404.html
       - echo "Pre-prod deployment completed successfully!"
     volumes:
       - name: build-artifacts
@@ -58,7 +41,9 @@ steps:
   - name: display_preprod_urls
     image: lowess/drone-tabulate
     environment:
-      <<: *preprod_env
+      BASE_URL: https://tommy-drone-builds.s3.amazonaws.com/
+      BUCKET: tommy-drone-builds
+      ENV: pre-prod
     settings:
       headers:
         - Environment
@@ -78,7 +63,6 @@ volumes:
   - name: build-artifacts
     temp: {}
 
-# Pipeline pour Release (Release/Pre-prod)
 ---
 kind: pipeline
 name: release
@@ -86,7 +70,10 @@ steps:
   - name: hugo-build
     image: peaceiris/hugo:v0.65.3-mod
     environment:
-      <<: *release_env
+      BASE_URL: https://tommy-release.s3.amazonaws.com/pre-prod/
+      BUCKET: tommy-release
+      PATH: pre-prod
+      ENV: release
     commands:
       - hugo --baseURL $BASE_URL
     volumes:
@@ -105,7 +92,7 @@ steps:
       AWS_DEFAULT_REGION: us-east-1
     commands:
       - echo "Deploying to Release environment..."
-      - aws s3 sync public/ s3://${BUCKET}/${PATH}/ --delete
+      - aws s3 sync public/ s3://tommy-release/pre-prod/ --delete
       - echo "Release deployment completed successfully!"
     volumes:
       - name: build-artifacts
@@ -113,13 +100,16 @@ steps:
     depends_on:
       - hugo-build
     when:
-      event: push
-      branch: release/pre-prod
+      event: tag
+      tag: release/*
 
   - name: display_release_urls
     image: lowess/drone-tabulate
     environment:
-      <<: *release_env
+      BASE_URL: https://tommy-release.s3.amazonaws.com/pre-prod/
+      BUCKET: tommy-release
+      PATH: pre-prod
+      ENV: release
     settings:
       headers:
         - Environment
@@ -132,14 +122,13 @@ steps:
           - "S3 Bucket"
           - https://s3.console.aws.amazon.com/s3/buckets/tommy-release
     when:
-      event: push
-      branch: release/pre-prod
+      event: tag
+      tag: release/*
 
 volumes:
   - name: build-artifacts
     temp: {}
 
-# Pipeline pour Production (Promote)
 ---
 kind: pipeline
 name: production
@@ -147,7 +136,9 @@ steps:
   - name: hugo-build
     image: peaceiris/hugo:v0.65.3-mod
     environment:
-      <<: *prod_env
+      BASE_URL: https://tommy-prod.s3.amazonaws.com/
+      BUCKET: tommy-prod
+      ENV: production
     commands:
       - hugo --baseURL $BASE_URL
     volumes:
@@ -166,8 +157,8 @@ steps:
       AWS_DEFAULT_REGION: us-east-1
     commands:
       - echo "Deploying to Production environment..."
-      - aws s3 sync public/ s3://${BUCKET} --delete
-      - aws s3 website s3://${BUCKET} --index-document index.html --error-document 404.html
+      - aws s3 sync public/ s3://tommy-prod --delete
+      - aws s3 website s3://tommy-prod --index-document index.html --error-document 404.html
       - echo "Production deployment completed successfully!"
     volumes:
       - name: build-artifacts
@@ -191,7 +182,9 @@ steps:
   - name: display_prod_urls
     image: lowess/drone-tabulate
     environment:
-      <<: *prod_env
+      BASE_URL: https://tommy-prod.s3.amazonaws.com/
+      BUCKET: tommy-prod
+      ENV: production
     settings:
       headers:
         - Environment
