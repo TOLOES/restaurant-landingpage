@@ -1,21 +1,37 @@
 ---
-hugo_env: &hugo_env
+# Variables pour différents environnements
+preprod_env: &preprod_env
    BASE_URL: https://tommy-drone-builds.s3.amazonaws.com/
+   BUCKET: tommy-drone-builds
+   ENV: pre-prod
 
+release_env: &release_env
+   BASE_URL: https://tommy-release.s3.amazonaws.com/pre-prod/
+   BUCKET: tommy-release
+   PATH: pre-prod
+   ENV: release
+
+prod_env: &prod_env
+   BASE_URL: https://tommy-prod.s3.amazonaws.com/
+   BUCKET: tommy-prod
+   ENV: production
+
+# Pipeline pour Master (Pre-prod)
+---
 kind: pipeline
-name: hugo-website
+name: pre-prod
 steps:
   - name: hugo-build
     image: peaceiris/hugo:v0.65.3-mod
     environment:
-      <<: *hugo_env
+      <<: *preprod_env
     commands:
       - hugo --baseURL $BASE_URL
     volumes:
       - name: build-artifacts
         path: /build
 
-  - name: deploy-to-s3
+  - name: deploy-to-preprod
     image: amazon/aws-cli:latest
     environment:
       AWS_ACCESS_KEY_ID:
@@ -26,10 +42,10 @@ steps:
         from_secret: AWS_SESSION_TOKEN
       AWS_DEFAULT_REGION: us-east-1
     commands:
-      - echo "Deploying Hugo site to S3..."
-      - aws s3 sync public/ s3://tommy-drone-builds --delete
-      - aws s3 website s3://tommy-drone-builds --index-document index.html --error-document 404.html
-      - echo "Deployment completed successfully!"
+      - echo "Deploying to Pre-prod environment..."
+      - aws s3 sync public/ s3://${BUCKET} --delete
+      - aws s3 website s3://${BUCKET} --index-document index.html --error-document 404.html
+      - echo "Pre-prod deployment completed successfully!"
     volumes:
       - name: build-artifacts
         path: /build
@@ -39,16 +55,17 @@ steps:
       event: push
       branch: master
 
-  - name: display_urls
+  - name: display_preprod_urls
     image: lowess/drone-tabulate
     environment:
-      <<: *hugo_env
+      <<: *preprod_env
     settings:
       headers:
+        - Environment
         - URL
       rows:
         -
-          - "S3 Website"
+          - "Pre-prod"
           - https://tommy-drone-builds.s3.amazonaws.com/index.html
         -
           - "S3 Bucket"
@@ -56,6 +73,142 @@ steps:
     when:
       event: push
       branch: master
+
+volumes:
+  - name: build-artifacts
+    temp: {}
+
+# Pipeline pour Release (Release/Pre-prod)
+---
+kind: pipeline
+name: release
+steps:
+  - name: hugo-build
+    image: peaceiris/hugo:v0.65.3-mod
+    environment:
+      <<: *release_env
+    commands:
+      - hugo --baseURL $BASE_URL
+    volumes:
+      - name: build-artifacts
+        path: /build
+
+  - name: deploy-to-release
+    image: amazon/aws-cli:latest
+    environment:
+      AWS_ACCESS_KEY_ID:
+        from_secret: AWS_ACCESS_KEY_ID
+      AWS_SECRET_ACCESS_KEY:
+        from_secret: AWS_SECRET_ACCESS_KEY
+      AWS_SESSION_TOKEN:
+        from_secret: AWS_SESSION_TOKEN
+      AWS_DEFAULT_REGION: us-east-1
+    commands:
+      - echo "Deploying to Release environment..."
+      - aws s3 sync public/ s3://${BUCKET}/${PATH}/ --delete
+      - echo "Release deployment completed successfully!"
+    volumes:
+      - name: build-artifacts
+        path: /build
+    depends_on:
+      - hugo-build
+    when:
+      event: push
+      branch: release/pre-prod
+
+  - name: display_release_urls
+    image: lowess/drone-tabulate
+    environment:
+      <<: *release_env
+    settings:
+      headers:
+        - Environment
+        - URL
+      rows:
+        -
+          - "Release"
+          - https://tommy-release.s3.amazonaws.com/pre-prod/index.html
+        -
+          - "S3 Bucket"
+          - https://s3.console.aws.amazon.com/s3/buckets/tommy-release
+    when:
+      event: push
+      branch: release/pre-prod
+
+volumes:
+  - name: build-artifacts
+    temp: {}
+
+# Pipeline pour Production (Promote)
+---
+kind: pipeline
+name: production
+steps:
+  - name: hugo-build
+    image: peaceiris/hugo:v0.65.3-mod
+    environment:
+      <<: *prod_env
+    commands:
+      - hugo --baseURL $BASE_URL
+    volumes:
+      - name: build-artifacts
+        path: /build
+
+  - name: deploy-to-production
+    image: amazon/aws-cli:latest
+    environment:
+      AWS_ACCESS_KEY_ID:
+        from_secret: AWS_ACCESS_KEY_ID
+      AWS_SECRET_ACCESS_KEY:
+        from_secret: AWS_SECRET_ACCESS_KEY
+      AWS_SESSION_TOKEN:
+        from_secret: AWS_SESSION_TOKEN
+      AWS_DEFAULT_REGION: us-east-1
+    commands:
+      - echo "Deploying to Production environment..."
+      - aws s3 sync public/ s3://${BUCKET} --delete
+      - aws s3 website s3://${BUCKET} --index-document index.html --error-document 404.html
+      - echo "Production deployment completed successfully!"
+    volumes:
+      - name: build-artifacts
+        path: /build
+    depends_on:
+      - hugo-build
+    when:
+      event: promote
+      target: production
+
+  - name: create-git-tag
+    image: plugins/git:latest
+    settings:
+      remote: origin
+      tags: ${DRONE_TAG}
+      message: "Release ${DRONE_TAG} to production"
+    when:
+      event: promote
+      target: production
+
+  - name: display_prod_urls
+    image: lowess/drone-tabulate
+    environment:
+      <<: *prod_env
+    settings:
+      headers:
+        - Environment
+        - URL
+      rows:
+        -
+          - "Production"
+          - https://tommy-prod.s3.amazonaws.com/index.html
+        -
+          - "S3 Bucket"
+          - https://s3.console.aws.amazon.com/s3/buckets/tommy-prod
+        -
+          - "Git Tag"
+          - ${DRONE_TAG}
+    when:
+      event: promote
+      target: production
 
 volumes:
   - name: build-artifacts
